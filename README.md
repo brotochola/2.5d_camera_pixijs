@@ -1,3 +1,7 @@
+[https://brotochola.github.io/2.5d_camera_pixijs/
+](https://brotochola.github.io/2.5d_camera_pixijs/)
+
+
 # 2.5D Camera Implementation with PixiJS
 
 A 2.5D camera implementation using PixiJS that provides pseudo-3D rendering capabilities with camera controls and object manipulation.
