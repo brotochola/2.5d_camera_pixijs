@@ -28,6 +28,43 @@
             font-size: 14px;
         }
 
+        #debug-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 5px;
+            color: white;
+            z-index: 100;
+            width: 250px;
+        }
+
+        .slider-container {
+            margin: 10px 0;
+        }
+
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+
+        .slider-container input {
+            width: 100%;
+        }
+
+        .slider-value {
+            float: right;
+            font-size: 12px;
+        }
+
+        #debug-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #fff;
+        }
+
         #crosshair {
             position: absolute;
             top: 50%;
@@ -69,6 +106,29 @@
         <div id="ui">
             <div>WASD: Mover | Mouse: Mirar | Clic: Disparar</div>
             <div id="coords">Pos: (0, 0, 0) | Rot: 0°</div>
+        </div>
+        <div id="debug-panel">
+            <h3>Debug Controls</h3>
+            <div class="slider-container">
+                <label>FOV: <span class="slider-value" id="fov-value">80</span></label>
+                <input type="range" id="fov-slider" min="30" max="120" value="80">
+            </div>
+            <div class="slider-container">
+                <label>Max Render Distance: <span class="slider-value" id="max-distance-value">110</span></label>
+                <input type="range" id="max-distance-slider" min="50" max="200" value="110">
+            </div>
+            <div class="slider-container">
+                <label>Margin Factor: <span class="slider-value" id="margin-factor-value">0.2</span></label>
+                <input type="range" id="margin-factor-slider" min="-1" max="1" step="0.05" value="0.2">
+            </div>
+            <div class="slider-container">
+                <label>Darken Factor: <span class="slider-value" id="darken-factor-value">0.7</span></label>
+                <input type="range" id="darken-factor-slider" min="0" max="1" step="0.05" value="0.7">
+            </div>
+            <div class="slider-container">
+                <label>Ground Size: <span class="slider-value" id="ground-size-value">30</span></label>
+                <input type="range" id="ground-size-slider" min="10" max="50" value="30">
+            </div>
         </div>
     </div>
 
@@ -147,7 +207,7 @@
                 this.tilt = 0;      // Rotación vertical
                 this.fov = 80;      // Campo de visión
                 this.near = 0.1;
-                this.far = 1000;
+                this.far = 90;
             }
             transitionToNewPosition(x, y, z, tilt, rotationY, fov) {
                 this.targetX = x;
@@ -235,13 +295,22 @@
                 this.centerX = width / 2;
                 this.centerY = height / 2;
                 this.zBuffer = new Array(width * height);
-
+                this.maxDistanceToRender = 110
+                this.marginFactor = 0.2
             }
 
             calculateFocalLength(fov) {
                 // Convert FOV from degrees to radians and calculate focal length
                 const fovRadians = (fov * Math.PI) / 180;
                 return (this.width / 2) / Math.tan(fovRadians / 2);
+            }
+
+            calculateScreenMargin() {
+                // Calculate margin based on screen dimensions and focal length
+                // We want the margin to be proportional to the screen size
+                // but also consider the focal length to account for FOV
+                const baseMargin = Math.min(this.width, this.height) * this.marginFactor; // 20% of smaller screen dimension
+                return baseMargin;
             }
 
             project3D(x, y, z, camera) {
@@ -276,11 +345,18 @@
                 const screenX = this.centerX + x2 * scale;
                 const screenY = this.centerY - y2 * scale;
 
+                const margin = this.calculateScreenMargin();
+
+                // Check if point is within screen bounds with dynamic margin
+                const isVisible = screenX >= -margin && screenX <= this.width + margin &&
+                    screenY >= -margin && screenY <= this.height + margin;
+
                 return {
                     x: screenX,
                     y: screenY,
                     z: z2,
-                    scale: scale
+                    scale: scale,
+                    isVisible: isVisible
                 };
             }
 
@@ -302,7 +378,7 @@
         // Crear piso
         function createGround(size = 20) {
             const ground = new Object3D(0, 0, 0);
-            ground.color = 0x444444;
+            ground.color = 0x99ff99;
             ground.vertices = [];
             ground.faces = [];
 
@@ -311,11 +387,12 @@
             for (let x = -size * 2; x <= size * 2; x += step) {  // Extended size
                 for (let z = -size * 2; z <= size * 2; z += step) {  // Extended size
                     const baseIndex = ground.vertices.length;
+                    const y = 0
                     ground.vertices.push(
-                        [x, 0, z],
-                        [x + step, 0, z],
-                        [x + step, 0, z + step],
-                        [x, 0, z + step]
+                        [x, y, z],
+                        [x + step, y, z],
+                        [x + step, y, z + step],
+                        [x, y, z + step]
                     );
                     ground.faces.push([baseIndex, baseIndex + 1, baseIndex + 2, baseIndex + 3]);
                 }
@@ -339,9 +416,67 @@
                 this.renderer3D = new Renderer3D(window.innerWidth, window.innerHeight);
                 this.camera = new Camera(1, 2, 10);
                 this.objects = [];
+                this.groundSize = 30;
+                this.darkenFactor = 0.7;
 
-                // Crear objetos del mundo
-                this.objects.push(createGround(20));
+                this.setupDebugControls();
+                this.createWorld();
+                this.setupControls();
+                this.setupGameLoop();
+            }
+
+            setupDebugControls() {
+                // FOV Slider
+                const fovSlider = document.getElementById('fov-slider');
+                const fovValue = document.getElementById('fov-value');
+                fovSlider.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value);
+                    this.camera.fov = value;
+                    fovValue.textContent = value;
+                });
+
+                // Max Distance Slider
+                const maxDistanceSlider = document.getElementById('max-distance-slider');
+                const maxDistanceValue = document.getElementById('max-distance-value');
+                maxDistanceSlider.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value);
+                    this.renderer3D.maxDistanceToRender = value;
+                    maxDistanceValue.textContent = value;
+                });
+
+                // Margin Factor Slider
+                const marginFactorSlider = document.getElementById('margin-factor-slider');
+                const marginFactorValue = document.getElementById('margin-factor-value');
+                marginFactorSlider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+                    this.renderer3D.marginFactor = value;
+                    marginFactorValue.textContent = value.toFixed(2);
+                });
+
+                // Darken Factor Slider
+                const darkenFactorSlider = document.getElementById('darken-factor-slider');
+                const darkenFactorValue = document.getElementById('darken-factor-value');
+                darkenFactorSlider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+                    this.darkenFactor = value;
+                    darkenFactorValue.textContent = value.toFixed(2);
+                });
+
+                // Ground Size Slider
+                const groundSizeSlider = document.getElementById('ground-size-slider');
+                const groundSizeValue = document.getElementById('ground-size-value');
+                groundSizeSlider.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value);
+                    this.groundSize = value;
+                    this.recreateGround();
+                    groundSizeValue.textContent = value;
+                });
+            }
+
+            createWorld() {
+                // Create ground and other objects
+                this.ground = createGround(this.groundSize);
+                this.objects.push(this.ground);
                 this.objects.push(createSprite3D(0, 3, 0.5, 1, 0xff0000));
                 this.objects.push(createSprite3D(5, 4, 0.5, 1, 0x00ff00));
                 this.objects.push(createSprite3D(-3, 3, 1.5, 1, 0x0000ff));
@@ -353,9 +488,20 @@
                 for (const obj of this.objects) {
                     this.app.stage.addChild(obj.graphics);
                 }
+            }
 
-                this.setupControls();
-                this.setupGameLoop();
+            recreateGround() {
+                // Remove old ground
+                const groundIndex = this.objects.indexOf(this.ground);
+                if (groundIndex !== -1) {
+                    this.app.stage.removeChild(this.ground.graphics);
+                    this.objects.splice(groundIndex, 1);
+                }
+
+                // Create new ground
+                this.ground = createGround(this.groundSize);
+                this.objects.unshift(this.ground);
+                this.app.stage.addChild(this.ground.graphics);
             }
 
             setupControls() {
@@ -500,13 +646,13 @@
 
             renderSprite(sprite) {
                 const projected = this.renderer3D.project3D(sprite.x, sprite.y, sprite.z, this.camera);
+
                 sprite.updateGraphics(projected);
             }
 
             renderMesh(obj) {
                 const projectedVertices = [];
 
-                // Project all vertices
                 for (const vertex of obj.vertices) {
                     const worldX = vertex[0] + obj.x;
                     const worldY = vertex[1] + obj.y;
@@ -516,15 +662,37 @@
                     projectedVertices.push(projected);
                 }
 
-                // Update mesh graphics
                 obj.graphics.clear();
+                this.numberOfVisibleFaces = 0;
 
-                // Render faces
                 for (const face of obj.faces) {
                     const faceVertices = face.map(i => projectedVertices[i]).filter(v => v !== null);
 
-                    if (faceVertices.length >= 3) {
-                        obj.graphics.beginFill(obj.color);
+                    if (faceVertices.length >= 3 && faceVertices.some(v => v.isVisible)) {
+                        this.numberOfVisibleFaces++;
+                        const avgZ = faceVertices.reduce((sum, v) => sum + v.z, 0) / faceVertices.length;
+
+                        const maxDistance = this.renderer3D.maxDistanceToRender * 0.9;
+                        const minDistance = 5;
+                        const distanceFactor = Math.min(Math.max((avgZ - minDistance) / (maxDistance - minDistance), 0), 1);
+
+                        if (avgZ > this.renderer3D.maxDistanceToRender) {
+                            continue;
+                        }
+
+                        const r = (obj.color >> 16) & 0xFF;
+                        const g = (obj.color >> 8) & 0xFF;
+                        const b = obj.color & 0xFF;
+
+                        // Use the darkenFactor from the slider
+                        const darkFactor = 1 - (distanceFactor * this.darkenFactor);
+                        const newR = Math.floor(r * darkFactor);
+                        const newG = Math.floor(g * darkFactor);
+                        const newB = Math.floor(b * darkFactor);
+
+                        const shadedColor = (newR << 16) | (newG << 8) | newB;
+
+                        obj.graphics.beginFill(shadedColor);
                         obj.graphics.moveTo(faceVertices[0].x, faceVertices[0].y);
 
                         for (let i = 1; i < faceVertices.length; i++) {
@@ -534,8 +702,7 @@
                         obj.graphics.closePath();
                         obj.graphics.endFill();
 
-                        // Contorno
-                        obj.graphics.lineStyle(1, 0x000000, 0.3);
+                        obj.graphics.lineStyle(1, 0x000000, 0.1);
                         obj.graphics.moveTo(faceVertices[0].x, faceVertices[0].y);
                         for (let i = 1; i < faceVertices.length; i++) {
                             obj.graphics.lineTo(faceVertices[i].x, faceVertices[i].y);
@@ -544,6 +711,7 @@
                         obj.graphics.lineStyle(0);
                     }
                 }
+                obj.ratioOfVisibleFaces = this.numberOfVisibleFaces / obj.faces.length;
             }
 
             updateUI() {
