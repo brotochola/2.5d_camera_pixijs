@@ -151,6 +151,7 @@
                 this.faces = [];
                 this.color = 0xffffff;
                 this.graphics = new PIXI.Graphics();
+                this.shadowGraphics = new PIXI.Graphics(); // Add shadow graphics
                 this.needsUpdate = true;
                 this.isSprite = false;
             }
@@ -173,24 +174,57 @@
                 if (!this.needsUpdate && !this.isSprite) return;
 
                 this.graphics.clear();
+                this.shadowGraphics.clear();
 
                 if (this.isSprite && projected && projected.z > 0) {
                     const size = this.size * projected.scale;
 
-                    // Dibujar sprite como círculo
-                    this.graphics.beginFill(this.color);
-                    this.graphics.drawCircle(projected.x, projected.y, size);
-                    this.graphics.endFill();
+                    // Draw shadow first
+                    const shadowY = 0; // Shadow is always at ground level
+                    const shadowProjected = this.renderer3D.project3D(this.x, shadowY, this.z, this.camera);
 
-                    // Contorno
-                    this.graphics.lineStyle(2, 0x000000, 0.8);
-                    this.graphics.drawCircle(projected.x, projected.y, size);
-                    this.graphics.lineStyle(0);
+                    if (shadowProjected && shadowProjected.scale > 0) {
+                        // Base shadow size with minimum threshold
+                        const baseShadowSize = Math.max(1, size * 0.66)
 
-                    // Highlight interno
-                    this.graphics.beginFill(0xffffff, 0.3);
-                    this.graphics.drawCircle(projected.x - size * 0.3, projected.y - size * 0.3, size * 0.3);
-                    this.graphics.endFill();
+                        // Simple tilt factor (0 to 1)
+                        const tiltFactor = Math.abs(Math.sin(this.camera.tilt)); // 0 when horizontal, 1 when vertical
+
+                        // Calculate opacity
+                        const heightFactor = Math.min(Math.max(0, this.y / 10), 1);
+                        const distanceFactor = Math.min(Math.max(0, shadowProjected.z / 50), 1);
+                        const shadowAlpha = Math.min(Math.max(0.1, 0.4 - heightFactor * 0.2 - distanceFactor * 0.2), 0.4);
+
+                        // Gentle shadow stretching
+                        const radiusX = Math.max(1, baseShadowSize * (1.5 - tiltFactor * 0.5)) + heightFactor;
+                        const radiusY = Math.max(1, baseShadowSize * tiltFactor) + heightFactor;
+
+                        // Simple offset based on height and tilt
+                        const offsetX = -this.y * 0.5 * tiltFactor;
+                        const offsetY = radiusY * 0.5;
+
+                        try {
+                            this.shadowGraphics.clear();
+                            this.shadowGraphics.beginFill(0x000000, shadowAlpha * 0.5);
+                            this.shadowGraphics.drawEllipse(
+                                shadowProjected.x + offsetX,
+                                shadowProjected.y + offsetY,
+                                radiusX,
+                                radiusY
+                            );
+                            this.shadowGraphics.endFill();
+                        } catch (error) {
+                            console.warn('Shadow drawing error:',
+                                { radiusX, radiusY, x: shadowProjected.x + offsetX, y: shadowProjected.y + offsetY },
+                                error
+                            );
+                        }
+
+                        // Draw sprite
+                        this.graphics.beginFill(this.color);
+                        this.graphics.drawCircle(projected.x, projected.y, size);
+                        this.graphics.endFill();
+                    }
                 }
 
                 this.needsUpdate = false;
@@ -217,13 +251,9 @@
                 this.targetRotationY = rotationY;
                 this.targetFov = fov;
                 this.transitioning = true;
-
-
-
             }
 
             move(dx, dy, dz) {
-
                 // Movimiento relativo a la rotación de la cámara
                 const cos = Math.cos(this.rotationY);
                 const sin = Math.sin(this.rotationY);
@@ -275,7 +305,6 @@
                         if (Math.abs(this.tilt - this.targetTilt) < 0.01 && Math.abs(this.rotationY - this.targetRotationY) < 0.01 && Math.abs(this.fov - this.targetFov) < 0.01) {
                             this.transitioning = false;
                         }
-
                     }
                 }
             }
@@ -340,7 +369,6 @@
                 if (z2 < 0.01) return null; // Minimum distance from camera
 
                 // Calculate focal length based on camera's FOV
-
                 const scale = this.focalLength / z2;
                 const screenX = this.centerX + x2 * scale;
                 const screenY = this.centerY - y2 * scale;
@@ -477,16 +505,23 @@
                 // Create ground and other objects
                 this.ground = createGround(this.groundSize);
                 this.objects.push(this.ground);
-                this.objects.push(createSprite3D(0, 3, 0.5, 1, 0xff0000));
-                this.objects.push(createSprite3D(5, 4, 0.5, 1, 0x00ff00));
-                this.objects.push(createSprite3D(-3, 3, 1.5, 1, 0x0000ff));
-                this.objects.push(createSprite3D(2, 3, 0.5, 1, 0xffff00));
-                this.objects.push(createSprite3D(-8, 5, 1.2, 1, 0xff00ff));
-                this.objects.push(createSprite3D(7, 2.5, 0.6, 1, 0x00ffff));
+                this.app.stage.addChild(this.ground.graphics);  // Add ground graphics first
 
-                // Add all object graphics to stage
-                for (const obj of this.objects) {
-                    this.app.stage.addChild(obj.graphics);
+                // Create sprites with their shadows
+                const sprites = [
+                    createSprite3D(0, 3, 0.5, 1, 0xff0000),
+                    createSprite3D(5, 4, 0.5, 1, 0x00ff00),
+                    createSprite3D(-3, 3, 1.5, 1, 0x0000ff),
+                    createSprite3D(2, 3, 0.5, 1, 0xffff00),
+                    createSprite3D(-8, 5, 1.2, 1, 0xff00ff),
+                    createSprite3D(7, 2.5, 0.6, 1, 0x00ffff)
+                ];
+
+                // Add sprites and their shadows
+                for (const sprite of sprites) {
+                    this.objects.push(sprite);
+                    this.app.stage.addChild(sprite.shadowGraphics); // Add shadow first (render below sprite)
+                    this.app.stage.addChild(sprite.graphics);
                 }
             }
 
@@ -501,7 +536,7 @@
                 // Create new ground
                 this.ground = createGround(this.groundSize);
                 this.objects.unshift(this.ground);
-                this.app.stage.addChild(this.ground.graphics);
+                this.app.stage.addChild(this.ground.graphics);  // Don't forget to add graphics when recreating
             }
 
             setupControls() {
@@ -580,13 +615,10 @@
                     if (centerX >= bounds.left && centerX <= bounds.right &&
                         centerY >= bounds.top && centerY <= bounds.bottom) {
                         return obj
-
                     }
                 }
 
                 return null
-
-
             }
 
             handleInput() {
@@ -598,7 +630,27 @@
                 if (this.keys['KeyD']) this.camera.move(speed, 0, 0);
                 if (this.keys['Space']) this.camera.move(0, speed, 0);
                 if (this.keys['ShiftLeft']) this.camera.move(0, -speed, 0);
+            }
+            update() {
+                for (const obj of this.objects.filter(k => k.isSprite)) {
+                    // Update positions with movement
+                    const randomSign = Math.random() > 0.5 ? -1 : 1
+                    // obj.x += Math.sin((performance.now()) / 1000 - obj.size) * 0.08 + (Math.random() - 0.5) * 0.1
+                    obj.y += Math.cos(performance.now() / 1000) * 0.04
+                    // obj.z += randomSign * Math.cos(performance.now() / 1000) * 0.04 + (Math.random() - 0.5) * 0.1
 
+                    //-------------
+                    // Ground collision check
+                    const groundLevel = 0;
+                    const objectRadius = obj.size;
+
+                    if (obj.y - objectRadius < groundLevel) {
+                        // Place object exactly at ground level plus radius
+                        obj.y = groundLevel + objectRadius;
+
+
+                    }
+                }
             }
 
             render() {
@@ -646,7 +698,8 @@
 
             renderSprite(sprite) {
                 const projected = this.renderer3D.project3D(sprite.x, sprite.y, sprite.z, this.camera);
-
+                sprite.renderer3D = this.renderer3D;
+                sprite.camera = this.camera;
                 sprite.updateGraphics(projected);
             }
 
@@ -722,6 +775,7 @@
             setupGameLoop() {
                 this.app.ticker.add(() => {
                     this.handleInput();
+                    this.update()
                     this.render();
                 });
             }
