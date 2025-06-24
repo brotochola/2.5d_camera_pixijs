@@ -11,6 +11,8 @@ class Game {
       antialias: true,
     });
 
+    window.__PIXI_APP__ = this.app;
+
     document.getElementById("gameContainer").appendChild(this.app.view);
 
     this.renderer3D = new Renderer3D(window.innerWidth, window.innerHeight);
@@ -18,6 +20,10 @@ class Game {
     this.objects = [];
     this.groundSize = 30;
     this.darkenFactor = 0.7;
+
+    // Object visibility tracking
+    this.numberOfVisibleObjects = 0;
+    this.ratioOfVisibleObjects = 0;
 
     this.setupDebugControls();
     this.createWorld();
@@ -79,7 +85,7 @@ class Game {
     this.objects.push(this.ground);
     this.app.stage.addChild(this.ground.graphics); // Add ground graphics first
 
-    // Create 100 grass sprites at random positions with y=0
+    // Create 200 grass sprites at random positions with y=0
     const sprites = [];
     const grassCount = 200;
     const spawnRadius = this.groundSize * 1.5; // Spawn within ground area
@@ -90,6 +96,16 @@ class Game {
       const distance = Math.random() * spawnRadius;
       const x = Math.cos(angle) * distance;
       const z = Math.sin(angle) * distance;
+
+      // Ensure we don't place sprites too close to camera starting position
+      const distanceFromCamera = Math.sqrt(
+        (x - 1) * (x - 1) + (z - 10) * (z - 10)
+      );
+      if (distanceFromCamera < 2) {
+        // Skip this iteration if too close to camera
+        i--;
+        continue;
+      }
 
       // Random size variation for more natural look
       const size = 0.2;
@@ -302,6 +318,13 @@ class Game {
       this.renderObject(obj);
     }
 
+    // Calculate ratio of visible objects using actual sprite visibility
+    const actualVisibleCount = this.objects
+      .map((k) => (k.sprite || {}).visible)
+      .filter((o) => o).length;
+    this.numberOfVisibleObjects = actualVisibleCount;
+    this.ratioOfVisibleObjects = actualVisibleCount / this.objects.length;
+
     this.camera.update();
     // Actualizar UI
     this.updateUI();
@@ -322,6 +345,19 @@ class Game {
       sprite.z,
       this.camera
     );
+
+    // Validate projection before updating graphics
+    if (
+      !projected ||
+      projected.z <= 0 ||
+      !isFinite(projected.x) ||
+      !isFinite(projected.y)
+    ) {
+      if (sprite.sprite) sprite.sprite.visible = false;
+      sprite.shadowGraphics.visible = false;
+      return;
+    }
+
     sprite.renderer3D = this.renderer3D;
     sprite.camera = this.camera;
     sprite.updateGraphics(projected);
@@ -409,7 +445,9 @@ class Game {
     )}, ${this.camera.y.toFixed(1)}, ${this.camera.z.toFixed(1)}) | Rot: ${(
       (this.camera.rotationY * 180) /
       Math.PI
-    ).toFixed(0)}°`;
+    ).toFixed(0)}° | Visible Objects: ${this.numberOfVisibleObjects}/${
+      this.objects.length
+    } (${(this.ratioOfVisibleObjects * 100).toFixed(1)}%)`;
   }
 
   setupGameLoop() {
