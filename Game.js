@@ -1,6 +1,6 @@
 import Camera from "./Camera.js";
-import Renderer3D from "./Renderer3D.js";
-import { createSprite3D, createGround } from "./utils.js";
+import Ground from "./Ground.js";
+import { createSprite3D } from "./utils.js";
 
 class Game {
   constructor() {
@@ -15,8 +15,7 @@ class Game {
 
     document.getElementById("gameContainer").appendChild(this.app.view);
 
-    this.renderer3D = new Renderer3D(window.innerWidth, window.innerHeight);
-    this.camera = new Camera(1, 2, 10);
+    this.camera = new Camera(1, 2, 10, window.innerWidth, window.innerHeight);
     this.objects = [];
     this.groundSize = 30;
     this.darkenFactor = 0.7;
@@ -24,6 +23,17 @@ class Game {
     // Object visibility tracking
     this.numberOfVisibleObjects = 0;
     this.ratioOfVisibleObjects = 0;
+
+    // FPS tracking
+    this.lastFrameTime = performance.now();
+    this.frameCount = 0;
+    this.fpsHistory = [];
+    this.fpsHistorySize = 60; // Keep last 60 frame times for smooth average
+    this.currentFPS = 0;
+
+    // Create shared shadow graphics
+    this.shadowGraphics = new PIXI.Graphics();
+    this.app.stage.addChild(this.shadowGraphics); // Add to stage early so it renders below sprites
 
     this.setupDebugControls();
     this.createWorld();
@@ -46,7 +56,7 @@ class Game {
     const maxDistanceValue = document.getElementById("max-distance-value");
     maxDistanceSlider.addEventListener("input", (e) => {
       const value = parseInt(e.target.value);
-      this.renderer3D.maxDistanceToRender = value;
+      this.camera.maxDistanceToRender = value;
       maxDistanceValue.textContent = value;
     });
 
@@ -55,7 +65,7 @@ class Game {
     const marginFactorValue = document.getElementById("margin-factor-value");
     marginFactorSlider.addEventListener("input", (e) => {
       const value = parseFloat(e.target.value);
-      this.renderer3D.marginFactor = value;
+      this.camera.marginFactor = value;
       marginFactorValue.textContent = value.toFixed(2);
     });
 
@@ -81,7 +91,7 @@ class Game {
 
   createWorld() {
     // Create ground and other objects
-    this.ground = createGround(this.groundSize);
+    this.ground = new Ground(this.groundSize);
     this.objects.push(this.ground);
     this.app.stage.addChild(this.ground.graphics); // Add ground graphics first
 
@@ -113,9 +123,8 @@ class Game {
       sprites.push(sprite);
 
       this.objects.push(sprite);
-      this.app.stage.addChild(sprite.shadowGraphics); // Add shadow first (render below sprite)
 
-      // Add the actual PIXI sprite if it exists
+      // Add the actual PIXI sprite if it exists (shadows are handled by shared graphics)
       if (sprite.sprite) {
         this.app.stage.addChild(sprite.sprite);
       } else {
@@ -134,7 +143,7 @@ class Game {
     }
 
     // Create new ground
-    this.ground = createGround(this.groundSize);
+    this.ground = new Ground(this.groundSize);
     this.objects.unshift(this.ground);
     this.app.stage.addChild(this.ground.graphics); // Don't forget to add graphics when recreating
   }
@@ -267,7 +276,10 @@ class Game {
   }
 
   render() {
-    this.renderer3D.clearZBuffer();
+    this.camera.clearZBuffer();
+
+    // Clear shared shadow graphics for this frame
+    this.shadowGraphics.clear();
 
     // Separate ground from other objects
     const ground = this.objects.find((obj) => !obj.isSprite);
@@ -280,7 +292,7 @@ class Game {
 
     // Calculate distances and filter visible sprites for performance
     const visibleSprites = [];
-    const maxRenderDistance = this.renderer3D.maxDistanceToRender;
+    const maxRenderDistance = this.camera.maxDistanceToRender;
 
     for (const obj of sprites) {
       const dx = obj.x - this.camera.x;
@@ -296,7 +308,6 @@ class Game {
         if (obj.sprite) {
           obj.sprite.visible = false;
         }
-        obj.shadowGraphics.visible = false;
       }
     }
 
@@ -314,8 +325,9 @@ class Game {
         this.app.stage.removeChild(obj.graphics);
         this.app.stage.addChild(obj.graphics);
       }
-      obj.shadowGraphics.visible = true;
       this.renderObject(obj);
+      // Render shadow to shared graphics
+      this.renderShadow(obj);
     }
 
     // Calculate ratio of visible objects using actual sprite visibility
@@ -333,18 +345,16 @@ class Game {
   renderObject(obj) {
     if (obj.isSprite) {
       this.renderSprite(obj);
+    } else if (obj instanceof Ground) {
+      obj.render(this.camera, this.darkenFactor);
+      this.numberOfVisibleFaces = obj.numberOfVisibleFaces; // Store for UI display
     } else {
       this.renderMesh(obj);
     }
   }
 
   renderSprite(sprite) {
-    const projected = this.renderer3D.project3D(
-      sprite.x,
-      sprite.y,
-      sprite.z,
-      this.camera
-    );
+    const projected = this.camera.project3D(sprite.x, sprite.y, sprite.z);
 
     // Validate projection before updating graphics
     if (
@@ -354,13 +364,85 @@ class Game {
       !isFinite(projected.y)
     ) {
       if (sprite.sprite) sprite.sprite.visible = false;
-      sprite.shadowGraphics.visible = false;
       return;
     }
 
-    sprite.renderer3D = this.renderer3D;
     sprite.camera = this.camera;
     sprite.updateGraphics(projected);
+  }
+
+  renderShadow(sprite) {
+    if (!sprite.isSprite || !sprite.isReady) return;
+
+    const projected = this.camera.project3D(sprite.x, sprite.y, sprite.z);
+
+    if (!projected || projected.z <= 0) return;
+
+    const size = sprite.size * projected.scale;
+
+    // Only render shadow if sprite size is reasonable
+    if (size < 0.5) return;
+
+    // Validate projected coordinates
+    if (
+      !projected.isVisible ||
+      !isFinite(projected.x) ||
+      !isFinite(projected.y) ||
+      projected.x < -1000 ||
+      projected.x > 3000 ||
+      projected.y < -1000 ||
+      projected.y > 3000
+    ) {
+      return;
+    }
+
+    // Calculate shadow position (always at ground level)
+    const shadowY = 0;
+    const shadowProjected = this.camera.project3D(sprite.x, shadowY, sprite.z);
+
+    if (
+      shadowProjected &&
+      shadowProjected.scale > 0 &&
+      shadowProjected.isVisible
+    ) {
+      // Optimized shadow calculation for small sprites
+      const baseShadowSize = Math.max(0.5, size * 0.8);
+      const tiltFactor = Math.abs(Math.sin(this.camera.tilt));
+
+      // Simplified shadow opacity calculation
+      const heightFactor = Math.min(sprite.y / 5, 1);
+      const distanceFactor = Math.min(shadowProjected.z / 30, 1);
+      const shadowAlpha = Math.max(
+        0.1,
+        0.3 - heightFactor * 0.1 - distanceFactor * 0.1
+      );
+
+      // Simplified shadow shape
+      const radiusX = baseShadowSize * (1.2 - tiltFactor * 0.3);
+      const radiusY = baseShadowSize * (0.6 + tiltFactor * 0.4);
+      const offsetX = -sprite.y * 0.3 * tiltFactor;
+
+      // Validate shadow coordinates
+      if (
+        isFinite(shadowProjected.x) &&
+        isFinite(shadowProjected.y) &&
+        radiusX > 0 &&
+        radiusY > 0
+      ) {
+        try {
+          this.shadowGraphics.beginFill(0x000000, shadowAlpha * 0.6);
+          this.shadowGraphics.drawEllipse(
+            shadowProjected.x + offsetX,
+            shadowProjected.y,
+            radiusX,
+            radiusY
+          );
+          this.shadowGraphics.endFill();
+        } catch (error) {
+          console.warn("Shadow drawing error:", error);
+        }
+      }
+    }
   }
 
   renderMesh(obj) {
@@ -371,12 +453,7 @@ class Game {
       const worldY = vertex[1] + obj.y;
       const worldZ = vertex[2] + obj.z;
 
-      const projected = this.renderer3D.project3D(
-        worldX,
-        worldY,
-        worldZ,
-        this.camera
-      );
+      const projected = this.camera.project3D(worldX, worldY, worldZ);
       projectedVertices.push(projected);
     }
 
@@ -393,14 +470,14 @@ class Game {
         const avgZ =
           faceVertices.reduce((sum, v) => sum + v.z, 0) / faceVertices.length;
 
-        const maxDistance = this.renderer3D.maxDistanceToRender * 0.9;
+        const maxDistance = this.camera.maxDistanceToRender * 0.9;
         const minDistance = 5;
         const distanceFactor = Math.min(
           Math.max((avgZ - minDistance) / (maxDistance - minDistance), 0),
           1
         );
 
-        if (avgZ > this.renderer3D.maxDistanceToRender) {
+        if (avgZ > this.camera.maxDistanceToRender) {
           continue;
         }
 
@@ -447,11 +524,38 @@ class Game {
       Math.PI
     ).toFixed(0)}° | Visible Objects: ${this.numberOfVisibleObjects}/${
       this.objects.length
-    } (${(this.ratioOfVisibleObjects * 100).toFixed(1)}%)`;
+    } (${(this.ratioOfVisibleObjects * 100).toFixed(
+      1
+    )}%) | FPS: ${this.currentFPS.toFixed(0)}`;
+  }
+
+  updateFPS() {
+    const currentTime = performance.now();
+    const deltaTime = currentTime - this.lastFrameTime;
+    this.lastFrameTime = currentTime;
+
+    // Add current frame time to history
+    this.fpsHistory.push(deltaTime);
+
+    // Keep only the last N frame times
+    if (this.fpsHistory.length > this.fpsHistorySize) {
+      this.fpsHistory.shift();
+    }
+
+    // Calculate average frame time and convert to FPS
+    if (this.fpsHistory.length > 0) {
+      const avgFrameTime =
+        this.fpsHistory.reduce((sum, time) => sum + time, 0) /
+        this.fpsHistory.length;
+      this.currentFPS = 1000 / avgFrameTime; // Convert ms to FPS
+    }
+
+    this.frameCount++;
   }
 
   setupGameLoop() {
     this.app.ticker.add(() => {
+      this.updateFPS();
       this.handleInput();
       this.update();
       this.render();

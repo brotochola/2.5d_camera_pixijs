@@ -143,10 +143,7 @@
         // Redimensionar ventana
         window.addEventListener('resize', () => {
             game.app.renderer.resize(window.innerWidth, window.innerHeight);
-            game.renderer3D.width = window.innerWidth;
-            game.renderer3D.height = window.innerHeight;
-            game.renderer3D.centerX = window.innerWidth / 2;
-            game.renderer3D.centerY = window.innerHeight / 2;
+            game.camera.updateScreenSize(window.innerWidth, window.innerHeight);
         });
     </script>
 </body>
