@@ -11,6 +11,8 @@ import {
 } from "./utils.js";
 import { ultraFastSin, ultraFastCos } from "./FastTrigonometry.js";
 
+export const ALTITUDES = true;
+
 class Game {
   constructor() {
     this.app = new PIXI.Application({
@@ -27,6 +29,7 @@ class Game {
     this.camera = new Camera(1, 2, 10, window.innerWidth, window.innerHeight);
     this.objects = [];
     this.groundSize = 30;
+    this.meshDensity = 2.2;
     this.darkenFactor = 0.7;
     this.occlusionCullingEnabled = true;
     this.shadowsEnabled = true;
@@ -95,6 +98,16 @@ class Game {
       groundSizeValue.textContent = value;
     });
 
+    // Mesh Density Slider
+    const meshDensitySlider = document.getElementById("mesh-density-slider");
+    const meshDensityValue = document.getElementById("mesh-density-value");
+    meshDensitySlider.addEventListener("input", (e) => {
+      const value = parseFloat(e.target.value);
+      this.meshDensity = value;
+      this.recreateGround();
+      meshDensityValue.textContent = value;
+    });
+
     // Occlusion Culling Checkbox
     const occlusionCullingCheckbox = document.getElementById(
       "occlusion-culling-checkbox"
@@ -117,13 +130,13 @@ class Game {
 
   createWorld() {
     // Create ground and other objects
-    this.ground = new Ground(this.groundSize);
+    this.ground = new Ground(this.groundSize, this.meshDensity);
     // this.objects.push(this.ground);
     this.app.stage.addChild(this.ground.graphics);
 
     // Create 200 grass sprites at random positions with y=0
     const sprites = [];
-    const grassCount = 1200;
+    const grassCount = 100;
     const spawnRadius = this.groundSize * 1.5;
 
     for (let i = 0; i < grassCount; i++) {
@@ -132,15 +145,17 @@ class Game {
       const x = ultraFastCos(angle) * distance;
       const z = ultraFastSin(angle) * distance;
 
+      const y = this.ground.getYAt(x, z);
+
       // Ensure we don't place sprites too close to camera starting position
-      const distanceFromCamera = calculateDistance3D(x, 0, z, 1, 2, 10);
+      const distanceFromCamera = calculateDistance3D(x, y, z, 1, 2, 10);
       if (distanceFromCamera < 2) {
         i--;
         continue;
       }
 
       const size = 0.2;
-      const sprite = createSprite3D(x, 0, z, size, 0x00ff00, "grass.png", this);
+      const sprite = createSprite3D(x, y, z, size, 0x00ff00, "grass.png", this);
       sprites.push(sprite);
       this.objects.push(sprite);
     }
@@ -149,7 +164,7 @@ class Game {
   recreateGround() {
     // Create new ground
     // this.ground.destroy();
-    this.ground.regenerate(this.groundSize);
+    this.ground.regenerate(this.groundSize, this.meshDensity);
     // this.objects.unshift(this.ground);
     this.app.stage.addChild(this.ground.graphics);
   }
@@ -285,7 +300,7 @@ class Game {
     this.ground.render(this.camera, this.darkenFactor);
 
     // Use camera's unified visibility filtering method
-    // const visibleObjects = this.camera.getVisibleObjects(
+    // const objectsToRender = this.camera.getVisibleObjects(
     //   this.objects,
     //   this.occlusionCullingEnabled
     // );

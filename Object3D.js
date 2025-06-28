@@ -1,4 +1,5 @@
 import { calculateShadowProperties, isValidProjection } from "./utils.js";
+import { ALTITUDES } from "./Game.js";
 
 class Object3D {
   constructor(x = 0, y = 0, z = 0, textureUrl = null, game) {
@@ -18,8 +19,7 @@ class Object3D {
     this.scaleX = 1;
     this.scaleY = 1;
     this.scaleZ = 1;
-    this.vertices = [];
-    this.faces = [];
+
     this.color = 0xffffff;
     // this.graphics = new PIXI.Graphics();
 
@@ -128,6 +128,8 @@ class Object3D {
     this.z += this.velocity.z;
 
     this.amIMoving = !this.isObjectInTheSamePositionAsPrev();
+    this.groundLevel = this.game.ground.getYAt(this.x, this.z);
+    this.amIOccludedByGround = ALTITUDES ? this.isOccludedByGround(15) : false;
 
     this.prev = {
       x: this.x,
@@ -144,11 +146,15 @@ class Object3D {
   }
 
   render() {
+    if (this.amIOccludedByGround) {
+      this.visible = false;
+      if (this.sprite) this.sprite.visible = false;
+      return;
+    }
+    this.iAintReRendering = !this.amIMoving && !this.game.camera.isCameraMoving;
+
     if (this.game.shadowsEnabled) this.renderShadow();
-
-    this.iAintRendering = !this.amIMoving && !this.game.camera.isCameraMoving;
-
-    if (this.iAintRendering) return;
+    if (this.iAintReRendering) return;
 
     this.getProjectedPosition();
 
@@ -185,7 +191,7 @@ class Object3D {
     // Shadow is directly below the object at ground level (y=0)
     const shadowProjected = this.game.camera.project3D(
       this.x, // Same X as object
-      0, // Ground level
+      this.groundLevel, // Ground level
       this.z // Same Z as object
     );
 
@@ -214,6 +220,64 @@ class Object3D {
         }
       }
     }
+  }
+
+  /**
+   * Check if this object is occluded by any ground cells
+   * @param {number} steps - Number of steps to sample along the line of sight (default: 15)
+   * @returns {boolean} True if the object is occluded by ground, false otherwise
+   */
+  isOccludedByGround(steps = 15) {
+    if (!this.game.camera || !this.game.ground) {
+      return false;
+    }
+
+    const camera = this.game.camera;
+
+    // Calculate vector from camera to object
+    const dx = this.x - camera.x;
+    const dy = this.y - camera.y;
+    const dz = this.z - camera.z;
+
+    // Calculate total distance
+    const totalDistance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // If object is very close to camera, skip occlusion check
+    if (totalDistance < 1) {
+      return false;
+    }
+
+    // Calculate step size for sampling
+    const stepSize = 1.0 / steps;
+
+    // Sample points along the line from camera to object
+    for (let i = 1; i < steps; i++) {
+      // Start from 1 to skip camera position, end before object
+      const t = i * stepSize;
+
+      // Interpolate position along the line
+      const sampleX = camera.x + dx * t;
+      const sampleY = camera.y + dy * t;
+      const sampleZ = camera.z + dz * t;
+
+      // Get ground height at this x,z position
+      const groundHeight = this.game.ground.getYAt(sampleX, sampleZ);
+
+      // Check if ground is higher than the line of sight at this point
+      // Add a small tolerance to avoid false positives from floating point precision
+      const tolerance = 0.1;
+      if (groundHeight > sampleY + tolerance) {
+        return true; // Object is occluded by ground
+      }
+    }
+
+    // Also check if the object itself is below ground level
+    const objectGroundHeight = this.game.ground.getYAt(this.x, this.z);
+    if (this.y < objectGroundHeight) {
+      return true;
+    }
+
+    return false; // No occlusion found
   }
 }
 
