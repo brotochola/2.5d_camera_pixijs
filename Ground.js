@@ -1,4 +1,5 @@
 import Object3D from "./Object3D.js";
+import { calculateShadedColor, calculateDistanceFactor } from "./utils.js";
 
 class Ground extends Object3D {
   constructor(size = 20) {
@@ -7,6 +8,12 @@ class Ground extends Object3D {
     this.size = size;
     this.numberOfVisibleFaces = 0;
     this.ratioOfVisibleFaces = 0;
+    this.graphics = new PIXI.Graphics();
+    this.generateGroundMesh(size);
+  }
+
+  regenerate(size) {
+    this.size = size;
     this.generateGroundMesh(size);
   }
 
@@ -39,6 +46,7 @@ class Ground extends Object3D {
   }
 
   render(camera, darkenFactor = 0.7) {
+    // console.log("render ground");
     const projectedVertices = [];
 
     for (const vertex of this.vertices) {
@@ -65,26 +73,21 @@ class Ground extends Object3D {
 
         const maxDistance = camera.maxDistanceToRender * 0.9;
         const minDistance = 5;
-        const distanceFactor = Math.min(
-          Math.max((avgZ - minDistance) / (maxDistance - minDistance), 0),
-          1
-        );
 
         if (avgZ > camera.maxDistanceToRender) {
           continue;
         }
 
-        const r = (this.color >> 16) & 0xff;
-        const g = (this.color >> 8) & 0xff;
-        const b = this.color & 0xff;
-
-        // Use the darkenFactor parameter
-        const darkFactor = 1 - distanceFactor * darkenFactor;
-        const newR = Math.floor(r * darkFactor);
-        const newG = Math.floor(g * darkFactor);
-        const newB = Math.floor(b * darkFactor);
-
-        const shadedColor = (newR << 16) | (newG << 8) | newB;
+        const distanceFactor = calculateDistanceFactor(
+          avgZ,
+          minDistance,
+          maxDistance
+        );
+        const shadedColor = calculateShadedColor(
+          this.color,
+          distanceFactor,
+          darkenFactor
+        );
 
         this.graphics.beginFill(shadedColor);
         this.graphics.moveTo(faceVertices[0].x, faceVertices[0].y);

@@ -50,8 +50,12 @@
             font-size: 12px;
         }
 
-        .slider-container input {
+        .slider-container input[type="range"] {
             width: 100%;
+        }
+
+        .slider-container input[type="checkbox"] {
+            margin-right: 8px;
         }
 
         .slider-value {
@@ -105,6 +109,7 @@
         <div id="crosshair"></div>
         <div id="ui">
             <div>WASD: Mover | Mouse: Mirar | Clic: Disparar</div>
+            <div>I/O: Isometric/Normal View | H: Toggle Shadows</div>
             <div id="coords">Pos: (0, 0, 0) | Rot: 0°</div>
         </div>
         <div id="debug-panel">
@@ -118,8 +123,8 @@
                 <input type="range" id="max-distance-slider" min="50" max="200" value="110">
             </div>
             <div class="slider-container">
-                <label>Margin Factor: <span class="slider-value" id="margin-factor-value">0.2</span></label>
-                <input type="range" id="margin-factor-slider" min="-1" max="1" step="0.05" value="0.2">
+                <label>Margin Factor: <span class="slider-value" id="margin-factor-value">1</span></label>
+                <input type="range" id="margin-factor-slider" min="-1" max="1" step="0.05" value="1">
             </div>
             <div class="slider-container">
                 <label>Darken Factor: <span class="slider-value" id="darken-factor-value">0.7</span></label>
@@ -127,7 +132,19 @@
             </div>
             <div class="slider-container">
                 <label>Ground Size: <span class="slider-value" id="ground-size-value">30</span></label>
-                <input type="range" id="ground-size-slider" min="10" max="50" value="30">
+                <input type="range" id="ground-size-slider" min="1" max="150" value="30">
+            </div>
+            <div class="slider-container">
+                <label>
+                    <input type="checkbox" id="occlusion-culling-checkbox" checked>
+                    Occlusion Culling
+                </label>
+            </div>
+            <div class="slider-container">
+                <label>
+                    <input type="checkbox" id="shadows-checkbox" checked>
+                    Shadows
+                </label>
             </div>
         </div>
     </div>
