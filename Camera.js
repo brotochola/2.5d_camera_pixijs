@@ -7,8 +7,10 @@ class Camera {
     y = 0,
     z = 0,
     width = window.innerWidth,
-    height = window.innerHeight
+    height = window.innerHeight,
+    game
   ) {
+    this.game = game;
     this.x = x;
     this.y = y;
     this.z = z;
@@ -195,6 +197,7 @@ class Camera {
       }
     }
 
+    // this.keepCameraOnTHeGround();
     this.isCameraMoving = !this.isCameraInTheSamePositionAsPrev();
 
     this.prev = {
@@ -206,6 +209,12 @@ class Camera {
       fov: this.fov,
       focalLength: this.focalLength,
     };
+  }
+
+  keepCameraOnTHeGround() {
+    this.groundLevel = this.game.ground.getYAt(this.x, this.z);
+
+    if (this.y > this.groundLevel) this.y = this.groundLevel + 4;
   }
   isCameraInTheSamePositionAsPrev() {
     if (!this.prev) return false;

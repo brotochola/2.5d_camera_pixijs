@@ -1,8 +1,22 @@
-import { calculateShadowProperties, isValidProjection } from "./utils.js";
+import {
+  calculateDistance3D,
+  calculateShadowProperties,
+  isValidProjection,
+} from "./utils.js";
 import { ALTITUDES } from "./Game.js";
 
 class Object3D {
-  constructor(x = 0, y = 0, z = 0, textureUrl = null, game) {
+  constructor(
+    x = 0,
+    y = 0,
+    z = 0,
+    textureUrl = null,
+    game,
+    offsetX = 0,
+    offsetY = 0
+  ) {
+    this.offsetX = offsetX;
+    this.offsetY = offsetY;
     this.game = game;
     this.id = Math.random().toString(36).substring(2, 15);
     this.x = x;
@@ -11,19 +25,24 @@ class Object3D {
     this.rotationX = 0;
     this.rotationY = 0;
     this.rotationZ = 0;
+    this.marginToBeAboveTheGround = 0.01;
+
     this.velocity = {
-      x: 0, //Math.random() * 0.1,
+      x: 0, // Math.random() * 0.05,
       y: 0,
-      z: 0, //Math.random() * 0.1 - 0.05,
+      z: 0, //Math.random() * 0.05 - 0.025,
     };
     this.scaleX = 1;
     this.scaleY = 1;
     this.scaleZ = 1;
 
     this.color = 0xffffff;
-    // this.graphics = new PIXI.Graphics();
 
     this.isSprite = false;
+    this.container = new PIXI.Container();
+    this.shadowGraphics = new PIXI.Graphics();
+    this.game.app.stage.addChild(this.container);
+    this.container.addChild(this.shadowGraphics);
     this.textureUrl = textureUrl;
     this.sprite = null;
     this.isTextureLoaded = false;
@@ -56,7 +75,9 @@ class Object3D {
 
       // Create sprite only after texture is loaded
       this.sprite = new PIXI.Sprite(this.texture);
-      this.game.app.stage.addChild(this.sprite);
+      this.sprite.x = this.offsetX;
+      this.sprite.y = this.offsetY;
+      this.container.addChild(this.sprite);
       this.sprite.anchor.set(0.5, 1); // Center the sprite
       this.isTextureLoaded = true;
       this.isReady = true;
@@ -86,14 +107,12 @@ class Object3D {
     // Don't render if texture is still loading
     if (this.isSprite && !this.isReady) return;
 
-    // this.graphics.clear();
-
     if (this.isSprite && projected && projected.z > 0) {
       const size = this.size * projected.scale;
 
       // Only render if size is reasonable (performance optimization)
       if (size < 0.5) {
-        if (this.sprite) this.sprite.visible = false;
+        this.container.visible = false;
         return;
       }
 
@@ -107,29 +126,37 @@ class Object3D {
         projected.y < -1000 ||
         projected.y > 3000
       ) {
-        if (this.sprite) this.sprite.visible = false;
+        this.container.visible = false;
         return;
       }
 
       // Update sprite position and scale if we have a sprite
-      if (this.sprite) {
-        this.sprite.x = projected.x;
-        this.sprite.y = projected.y;
+      if (this.container) {
+        this.container.x = projected.x;
+        this.container.y = projected.y;
         // Optimized scaling calculation
         const scale = Math.max(0.1, size / 64); // Assuming texture is around 64px
-        this.sprite.scale.set(scale);
-        this.sprite.visible = true;
+        this.container.scale.set(scale);
+        this.container.visible = true;
       }
     }
+  }
+
+  establishZindexFromDistanceToCamera(distance) {
+    this.container.zIndex = 10000 / distance;
   }
   update() {
     this.x += this.velocity.x;
     this.y += this.velocity.y;
     this.z += this.velocity.z;
 
+    this.cell = this.game.ground.getCellAt(this.x, this.z);
     this.amIMoving = !this.isObjectInTheSamePositionAsPrev();
     this.groundLevel = this.game.ground.getYAt(this.x, this.z);
-    this.amIOccludedByGround = ALTITUDES ? this.isOccludedByGround(15) : false;
+    // this.amIOccludedByGround = ALTITUDES ? this.isOccludedByGround(6) : false;
+
+    if (this.y > this.groundLevel)
+      this.y = this.groundLevel + this.marginToBeAboveTheGround;
 
     this.prev = {
       x: this.x,
@@ -146,14 +173,16 @@ class Object3D {
   }
 
   render() {
-    if (this.amIOccludedByGround) {
-      this.visible = false;
-      if (this.sprite) this.sprite.visible = false;
-      return;
-    }
+    // if (this.amIOccludedByGround) {
+    //   this.visible = false;
+    //   if (this.sprite) this.sprite.visible = false;
+    //   return;
+    // }
     this.iAintReRendering = !this.amIMoving && !this.game.camera.isCameraMoving;
 
+    // Always update shadows when camera moves, regardless of object movement
     if (this.game.shadowsEnabled) this.renderShadow();
+
     if (this.iAintReRendering) return;
 
     this.getProjectedPosition();
@@ -164,11 +193,12 @@ class Object3D {
     this.projected = this.game.camera.project3D(this.x, this.y, this.z);
     if (!this.projected) {
       this.visible = false;
-      if (this.sprite) this.sprite.visible = false;
+      this.container.visible = false;
       return;
     }
     this.visible = this.projected.isVisible;
-    if (this.sprite) this.sprite.visible = this.visible;
+    this.container.visible = this.visible;
+    this.establishZindexFromDistanceToCamera(this.projected.z);
   }
 
   renderShadow() {
@@ -176,50 +206,44 @@ class Object3D {
     if (!this.projected) return;
 
     if (!this.isSprite || !this.isReady) return;
+    this.shadowGraphics.clear();
 
+    // Add size check back - we need this for performance
     const size = this.size * this.projected.scale;
-    if (size < 0.1) return; // Less restrictive size check
+    if (size < 0.1) return;
 
-    // Calculate shadow properties
-    const baseShadowSize = size * 0.8; // Bigger base shadow size
-    const shadowProps = calculateShadowProperties(
-      this,
-      this.game.camera,
-      baseShadowSize
+    // Calculate shadow height based on camera position
+    const shadowHeight = this.calculateShadowHeight();
+
+    this.shadowGraphics.beginFill(0x000000, 0.3); // Increased opacity for visibility
+    this.shadowGraphics.drawEllipse(
+      0,
+      this.groundLevel - this.y,
+      this.size * 500,
+      shadowHeight
     );
+    this.shadowGraphics.endFill();
+  }
 
-    // Shadow is directly below the object at ground level (y=0)
-    const shadowProjected = this.game.camera.project3D(
-      this.x, // Same X as object
-      this.groundLevel, // Ground level
-      this.z // Same Z as object
-    );
+  /**
+   * Calculate shadow height based on camera position and object height
+   * @returns {number} The calculated shadow height
+   */
+  calculateShadowHeight() {
+    // Ensure we have a valid size property
+    if (!this.size) this.size = 1; // Default size if not set
 
-    if (
-      shadowProjected &&
-      shadowProjected.scale > 0 &&
-      shadowProjected.isVisible
-    ) {
-      if (
-        isFinite(shadowProjected.x) &&
-        isFinite(shadowProjected.y) &&
-        shadowProps.radiusX > 0 &&
-        shadowProps.radiusY > 0
-      ) {
-        try {
-          this.game.shadowGraphics.beginFill(0x000000, shadowProps.shadowAlpha);
-          this.game.shadowGraphics.drawEllipse(
-            shadowProjected.x,
-            shadowProjected.y,
-            shadowProps.radiusX,
-            shadowProps.radiusY
-          );
-          this.game.shadowGraphics.endFill();
-        } catch (error) {
-          console.warn("Shadow drawing error:", error);
-        }
-      }
-    }
+    const cameraHeight = this.game.camera.y;
+    const groundLevel = this.groundLevel || 0;
+
+    // Simple approach: higher camera = taller shadow
+    // Use a base shadow height and multiply by camera height factor
+    const baseShadowHeight = this.size * 20;
+    const heightFactor = Math.max(0.5, cameraHeight / Math.max(1, groundLevel));
+
+    const finalHeight = baseShadowHeight * heightFactor;
+
+    return finalHeight;
   }
 
   /**
@@ -272,8 +296,7 @@ class Object3D {
     }
 
     // Also check if the object itself is below ground level
-    const objectGroundHeight = this.game.ground.getYAt(this.x, this.z);
-    if (this.y < objectGroundHeight) {
+    if (this.y < this.groundLevel) {
       return true;
     }
 

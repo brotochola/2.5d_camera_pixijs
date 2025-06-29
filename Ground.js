@@ -4,8 +4,8 @@ import Cell from "./cell.js";
 import { ALTITUDES } from "./Game.js";
 
 class Ground extends Object3D {
-  constructor(size = 20, step = 2.2) {
-    super(0, 0, 0); // Ground is at origin
+  constructor(size = 20, step = 2.2, game) {
+    super(0, 0, 0, null, game); // Ground is at origin
     this.vertices = [];
     this.faces = [];
     this.cells = []; // Array to store Cell objects
@@ -14,14 +14,29 @@ class Ground extends Object3D {
     this.step = step;
     this.numberOfVisibleFaces = 0;
     this.ratioOfVisibleFaces = 0;
-    this.graphics = new PIXI.Graphics();
+
     this.generateGroundMesh(size, step);
   }
 
   regenerate(size, step = this.step) {
+    // Clean up existing cells
+    this.destroyCells();
+
     this.size = size;
     this.step = step;
     this.generateGroundMesh(size, step);
+  }
+
+  destroyCells() {
+    // Destroy all existing cell graphics
+    for (const cell of this.cells) {
+      cell.destroy();
+    }
+    this.cells = [];
+  }
+
+  getCellAt(x, z) {
+    return this.cells.find((c) => c.contains(x, z));
   }
 
   generateGroundMesh(size, step = this.step) {
@@ -33,16 +48,20 @@ class Ground extends Object3D {
     for (let x = -size * 2; x <= size * 2; x += step) {
       for (let z = -size * 2; z <= size * 2; z += step) {
         // Create a new cell with pre-generated heights
-        const cell = new Cell(x, z, step, (x, z) =>
-          ALTITUDES ? this.generateHeightAt(x, z) : 0
+        const cell = new Cell(
+          x,
+          z,
+          step,
+          (x, z) => (ALTITUDES ? this.generateHeightAt(x, z) : 0),
+          this.game
         );
         this.cells.push(cell);
 
-        // Add vertices from the cell to our vertex array for rendering
-        const baseIndex = this.vertices.length;
+        // Add vertices from the cell to our vertex array for getYAt method
         this.vertices.push(...cell.vertices);
 
-        // Create face indices
+        // Create face indices (kept for compatibility with getYAt)
+        const baseIndex = this.vertices.length - 4;
         this.faces.push([
           baseIndex,
           baseIndex + 1,
@@ -74,7 +93,7 @@ class Ground extends Object3D {
   // Method to get height at any world position using cell lookup and interpolation
   getYAt(x, z) {
     // Find the cell that contains this position
-    const cell = this.cells.find((c) => c.contains(x, z));
+    const cell = this.getCellAt(x, z);
 
     if (cell) {
       return cell.getHeightAt(x, z);
@@ -86,88 +105,29 @@ class Ground extends Object3D {
   }
 
   render(camera, darkenFactor = 0.7) {
-    // console.log("render ground");
-    const projectedVertices = [];
-
-    for (const vertex of this.vertices) {
-      const worldX = vertex[0] + this.x;
-      const worldY = vertex[1] + this.y;
-      const worldZ = vertex[2] + this.z;
-
-      const projected = camera.project3D(worldX, worldY, worldZ);
-      projectedVertices.push(projected);
-    }
-
-    this.graphics.clear();
+    // Reset counters
     this.numberOfVisibleFaces = 0;
 
-    // Create array of face data with depth information for sorting
-    const faceData = [];
+    // Render each cell individually
+    for (const cell of this.cells) {
+      cell.render(camera, darkenFactor);
 
-    for (let i = 0; i < this.faces.length; i++) {
-      const face = this.faces[i];
-      const faceVertices = face
-        .map((vertexIndex) => projectedVertices[vertexIndex])
-        .filter((v) => v !== null);
-
-      if (faceVertices.length >= 3 && faceVertices.some((v) => v.isVisible)) {
-        const avgZ =
-          faceVertices.reduce((sum, v) => sum + v.z, 0) / faceVertices.length;
-
-        // Skip faces that are too far away
-        if (avgZ > camera.maxDistanceToRender) {
-          continue;
-        }
-
-        faceData.push({
-          face: face,
-          faceVertices: faceVertices,
-          avgZ: avgZ,
-        });
+      // Count visible cells
+      if (cell.container.visible) {
+        this.numberOfVisibleFaces++;
       }
-    }
-
-    // Sort faces by average Z distance (back to front)
-    faceData.sort((a, b) => b.avgZ - a.avgZ);
-
-    // Render sorted faces
-    for (const data of faceData) {
-      this.numberOfVisibleFaces++;
-
-      const maxDistance = camera.maxDistanceToRender * 0.9;
-      const minDistance = 5;
-
-      const distanceFactor = calculateDistanceFactor(
-        data.avgZ,
-        minDistance,
-        maxDistance
-      );
-      const shadedColor = calculateShadedColor(
-        this.color,
-        distanceFactor,
-        darkenFactor
-      );
-
-      this.graphics.beginFill(shadedColor);
-      this.graphics.moveTo(data.faceVertices[0].x, data.faceVertices[0].y);
-
-      for (let i = 1; i < data.faceVertices.length; i++) {
-        this.graphics.lineTo(data.faceVertices[i].x, data.faceVertices[i].y);
-      }
-
-      this.graphics.closePath();
-      this.graphics.endFill();
-
-      this.graphics.lineStyle(1, 0x000000, 0.1);
-      this.graphics.moveTo(data.faceVertices[0].x, data.faceVertices[0].y);
-      for (let i = 1; i < data.faceVertices.length; i++) {
-        this.graphics.lineTo(data.faceVertices[i].x, data.faceVertices[i].y);
-      }
-      this.graphics.closePath();
-      this.graphics.lineStyle(0);
     }
 
     this.ratioOfVisibleFaces = this.numberOfVisibleFaces / this.faces.length;
+  }
+
+  // Get all cells for zIndex sorting
+  getCells() {
+    return this.cells;
+  }
+
+  destroy() {
+    this.destroyCells();
   }
 }
 

@@ -21,12 +21,20 @@ class Game {
       backgroundColor: 0x87ceeb,
       antialias: true,
     });
+    this.app.stage.sortableChildren = true;
 
     window.__PIXI_APP__ = this.app;
 
     document.getElementById("gameContainer").appendChild(this.app.view);
 
-    this.camera = new Camera(1, 2, 10, window.innerWidth, window.innerHeight);
+    this.camera = new Camera(
+      1,
+      2,
+      10,
+      window.innerWidth,
+      window.innerHeight,
+      this
+    );
     this.objects = [];
     this.groundSize = 30;
     this.meshDensity = 2.2;
@@ -130,13 +138,12 @@ class Game {
 
   createWorld() {
     // Create ground and other objects
-    this.ground = new Ground(this.groundSize, this.meshDensity);
-    // this.objects.push(this.ground);
-    this.app.stage.addChild(this.ground.graphics);
+    this.ground = new Ground(this.groundSize, this.meshDensity, this);
+    // Ground cells are now individual objects with their own graphics
 
     // Create 200 grass sprites at random positions with y=0
     const sprites = [];
-    const grassCount = 100;
+    const grassCount = 300;
     const spawnRadius = this.groundSize * 1.5;
 
     for (let i = 0; i < grassCount; i++) {
@@ -155,18 +162,25 @@ class Game {
       }
 
       const size = 0.2;
-      const sprite = createSprite3D(x, y, z, size, 0x00ff00, "grass.png", this);
+      const sprite = createSprite3D(
+        x,
+        y,
+        z,
+        size,
+        0x00ff00,
+        "grass.png",
+        this,
+        20,
+        20
+      );
       sprites.push(sprite);
       this.objects.push(sprite);
     }
   }
 
   recreateGround() {
-    // Create new ground
-    // this.ground.destroy();
+    // Regenerate ground with new parameters
     this.ground.regenerate(this.groundSize, this.meshDensity);
-    // this.objects.unshift(this.ground);
-    this.app.stage.addChild(this.ground.graphics);
   }
 
   setupControls() {
@@ -287,50 +301,72 @@ class Game {
   }
 
   render() {
-    // this.camera.clearZBuffer();
-
-    // Only clear shadow graphics if shadows are enabled
-
+    // Clear shadow graphics
     this.shadowGraphics.clear();
 
-    // Separate ground from sprites
-
-    // Render ground first
-
+    // Render ground cells first
     this.ground.render(this.camera, this.darkenFactor);
 
-    // Use camera's unified visibility filtering method
-    // const objectsToRender = this.camera.getVisibleObjects(
-    //   this.objects,
-    //   this.occlusionCullingEnabled
-    // );
-
-    // Ensure shadows are positioned above ground but below sprites
-    this.app.stage.removeChild(this.shadowGraphics);
-    this.app.stage.addChild(this.shadowGraphics);
+    // Render all other objects
     let visibleObjects = 0;
-    // Update sprite positions in stage based on z-order
     for (const obj of this.objects) {
-      if (obj.sprite) {
-        this.app.stage.removeChild(obj.sprite);
-        this.app.stage.addChild(obj.sprite);
-      }
-
       obj.render();
       if (obj.projected && obj.projected.isVisible) visibleObjects++;
     }
 
-    // // Calculate visibility stats including occlusion culling
+    // // Collect all renderable objects for zIndex sorting
+    // const allRenderables = [];
 
+    // // Add ground cells
+    // for (const cell of this.ground.getCells()) {
+    //   if (cell.graphics.visible && cell.avgZ !== undefined) {
+    //     allRenderables.push({
+    //       object: cell,
+    //       zIndex: cell.zIndex,
+    //       avgZ: cell.avgZ,
+    //       graphics: cell.graphics,
+    //     });
+    //   }
+    // }
+
+    // // Add other objects
+    // for (const obj of this.objects) {
+    //   if (obj.sprite && obj.sprite.visible && obj.projected) {
+    //     allRenderables.push({
+    //       object: obj,
+    //       zIndex: obj.zIndex,
+    //       avgZ: obj.projected.z,
+    //       sprite: obj.sprite,
+    //     });
+    //   }
+    // }
+
+    // // Sort by zIndex first, then by depth (avgZ) for same zIndex
+    // allRenderables.sort((a, b) => {
+    //   if (a.zIndex !== b.zIndex) {
+    //     return a.zIndex - b.zIndex; // Lower zIndex renders first (behind)
+    //   }
+    //   return b.avgZ - a.avgZ; // Higher Z (further) renders first for same zIndex
+    // });
+
+    // // Reorder display objects based on sorted order
+    // for (const renderable of allRenderables) {
+    //   if (renderable.graphics) {
+    //     this.app.stage.removeChild(renderable.graphics);
+    //     this.app.stage.addChild(renderable.graphics);
+    //   } else if (renderable.sprite) {
+    //     this.app.stage.removeChild(renderable.sprite);
+    //     this.app.stage.addChild(renderable.sprite);
+    //   }
+    // }
+
+    // // Ensure shadows are positioned above ground but below sprites
+    // this.app.stage.removeChild(this.shadowGraphics);
+    // this.app.stage.addChild(this.shadowGraphics);
+
+    // Update visibility stats
     this.numberOfVisibleObjects = this.objects.length;
     this.ratioOfVisibleObjects = visibleObjects / this.objects.length;
-
-    // // Calculate occluded objects by getting distance-filtered count and subtracting final count
-    // const distanceFilteredSprites =
-    //   this.camera.filterObjectsByDistance(sprites);
-    // this.numberOfOccludedObjects = this.occlusionCullingEnabled
-    //   ? distanceFilteredSprites.length - culledSprites.length
-    //   : 0;
 
     this.camera.update();
     this.updateUI();
@@ -349,9 +385,13 @@ class Game {
       Math.PI
     ).toFixed(0)}° | Visible Objects: ${this.numberOfVisibleObjects}/${
       this.objects.length
-    } (${(this.ratioOfVisibleObjects * 100).toFixed(
-      1
-    )}%)${occlusionText} | FPS: ${this.fpsTracker.currentFPS.toFixed(0)}`;
+    } (${(this.ratioOfVisibleObjects * 100).toFixed(1)}%) | Ground Faces: ${
+      this.ground.numberOfVisibleFaces
+    }/${this.ground.faces.length} (${(
+      this.ground.ratioOfVisibleFaces * 100
+    ).toFixed(1)}%)${occlusionText} | FPS: ${this.fpsTracker.currentFPS.toFixed(
+      0
+    )}`;
   }
 
   gameloop() {

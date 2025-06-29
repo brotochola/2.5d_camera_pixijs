@@ -8,13 +8,15 @@ export function createSprite3D(
   size = 1,
   color = 0xff0000,
   textureUrl = null,
-  game
+  game,
+  offsetX,
+  offsetY
 ) {
-  const sprite = new Object3D(x, y, z, textureUrl, game);
+  const sprite = new Object3D(x, y, z, textureUrl, game, offsetX, offsetY);
   sprite.size = size;
   sprite.color = color;
   sprite.isSprite = true;
-  sprite.needsUpdate = true;
+
   return sprite;
 }
 
